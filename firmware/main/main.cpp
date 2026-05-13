@@ -9,6 +9,7 @@
 #include <mooncake.h>
 #include <apps/apps.h>
 #include <hal/hal.h>
+#include <settings.h>
 
 using namespace mooncake;
 using namespace smooth_ui_toolkit;
@@ -51,6 +52,11 @@ extern "C" void app_main(void)
     // Uninstall all apps and destroy mooncake
     GetMooncake().uninstallAllApps();
     DestroyMooncake();
+
+    Settings mqtt_nvs("mqtt", true);
+    mqtt_nvs.SetString("broker",   "192.168.1.254");   // 你的 HA 服务器 IP
+    mqtt_nvs.SetInt("port",        1883);
+    mqtt_nvs.SetBool("enabled",    true);
 
     // Start xiaozhi, never returns
     GetHAL().startXiaozhi();

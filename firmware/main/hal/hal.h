@@ -179,6 +179,7 @@ public:
     void updateHeapStatusLog();
     uint8_t getBatteryLevel();
     bool isBatteryCharging();
+    void startMqtt();
     void factoryReset();
 
     /* --------------------------------- Display -------------------------------- */

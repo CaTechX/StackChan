@@ -199,6 +199,9 @@ void Hal::startXiaozhi()
     // Start stackchan update task
     xTaskCreatePinnedToCore(_stackchan_update_task, "stackchan", 4096, NULL, 3, NULL, 1);
 
+    // Start MQTT bridge (core 1, periodic battery reporting to HA)
+    startMqtt();
+
     hal_bridge::start_xiaozhi_app();
 }
 
