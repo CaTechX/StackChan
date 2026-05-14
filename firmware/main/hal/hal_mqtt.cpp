@@ -20,6 +20,7 @@
 
 #include <cstring>
 #include <cstdio>
+#include <cstdlib>
 #include <cctype>
 #include <cmath>
 #include <string>
@@ -51,11 +52,21 @@ static char s_avail_topic[64] = {0};   /* e.g. "stackchan_aabbccddeeff/availabil
 static char s_topic_touch[3][64]  = {};
 static char s_topic_proximity[64] = {};
 
+/* Backlight control topics */
+static char s_topic_bl_state[64];         /* stackchan_xxx/backlight/state         */
+static char s_topic_bl_set[64];           /* stackchan_xxx/backlight/set           */
+static char s_topic_bl_brightness_state[64]; /* stackchan_xxx/backlight/brightness/state */
+static char s_topic_bl_brightness_set[64];   /* stackchan_xxx/backlight/brightness/set   */
+
+/* Backlight state cache */
+static uint8_t s_cache_backlight = 255;        /* cached brightness (0-255) for cache/ON restore */
+static uint8_t s_last_backlight_brightness = 255; /* last non-zero brightness (0-255) — persists across ON/OFF */
+
 /* Trigger sensor state cache + timing */
 static uint8_t  s_cache_touch[3]      = {0xFF, 0xFF, 0xFF};
 static uint16_t s_cache_proximity     = 0xFFFF;
 static uint32_t s_last_trigger_publish = 0;
-static const uint32_t TRIGGER_MIN_MS  = pdMS_TO_TICKS(1000);
+static const uint32_t TRIGGER_MIN_MS  = pdMS_TO_TICKS(500);
 
 /* ---------------------------------------------------------------------------
  * Sensor state (shared across modules)
@@ -368,6 +379,194 @@ static void publish_touch_discovery(esp_mqtt_client_handle_t client, int ch)
     cJSON_Delete(root);
 }
 
+/* ===========================================================================
+ * Backlight (Light entity — brightness + power)
+ * =========================================================================== */
+
+static void init_backlight_topics()
+{
+    snprintf(s_topic_bl_state,          sizeof(s_topic_bl_state),          "%s/backlight/state",            s_device_id);
+    snprintf(s_topic_bl_set,            sizeof(s_topic_bl_set),            "%s/backlight/set",              s_device_id);
+    snprintf(s_topic_bl_brightness_state, sizeof(s_topic_bl_brightness_state), "%s/backlight/brightness/state", s_device_id);
+    snprintf(s_topic_bl_brightness_set,   sizeof(s_topic_bl_brightness_set),   "%s/backlight/brightness/set",   s_device_id);
+}
+
+/**
+ * HA MQTT Light discovery — gives a brightness slider + on/off toggle in HA.
+ * Because the HAL brightness is already 0-255 we use it 1:1.
+ */
+static void publish_backlight_discovery(esp_mqtt_client_handle_t client)
+{
+    char topic[128], unique_id[64];
+    snprintf(topic, sizeof(topic), "homeassistant/light/%s_backlight/config", s_device_id);
+    snprintf(unique_id, sizeof(unique_id), "%s_backlight", s_device_id);
+
+    cJSON *root = cJSON_CreateObject();
+    cJSON_AddStringToObject(root, "name",                    "StackChan Backlight");
+    cJSON_AddStringToObject(root, "unique_id",               unique_id);
+    cJSON_AddStringToObject(root, "state_topic",             s_topic_bl_state);
+    cJSON_AddStringToObject(root, "command_topic",           s_topic_bl_set);
+    cJSON_AddStringToObject(root, "brightness_state_topic",  s_topic_bl_brightness_state);
+    cJSON_AddStringToObject(root, "brightness_command_topic", s_topic_bl_brightness_set);
+    cJSON_AddStringToObject(root, "payload_on",              "ON");
+    cJSON_AddStringToObject(root, "payload_off",             "OFF");
+    cJSON_AddNumberToObject(root, "brightness_scale",        255);
+
+    cJSON *dev = cJSON_CreateObject();
+    cJSON_AddStringToObject(dev, "identifiers", s_device_id);
+    cJSON_AddStringToObject(dev, "name",        "StackChan");
+    cJSON_AddStringToObject(dev, "model",       "StackChan");
+    cJSON_AddStringToObject(dev, "manufacturer", "M5Stack");
+    cJSON_AddItemToObject(root, "device", dev);
+
+    char *payload = cJSON_PrintUnformatted(root);
+    if (payload) {
+        esp_mqtt_client_publish(client, topic, payload, 0, 1, 1);
+        free(payload);
+    }
+    cJSON_Delete(root);
+}
+
+/** Publish both state (ON/OFF) + brightness to HA (retained for reconnection).
+ *  When b_known is supplied, use it directly instead of reading back from HAL
+ *  (avoids picking up stale brightness_ during the backlight's gradual transition).
+ *
+ *  ⚠ HAL reads back brightness in 0-100 range.  The MQTT layer operates in
+ *     0-255 (HA standard).  Reverse scale when falling back to the getter. */
+static void publish_backlight_state(esp_mqtt_client_handle_t client, uint8_t b_known = UINT8_MAX)
+{
+    uint8_t b;
+    if (b_known != UINT8_MAX) {
+        b = b_known;  /* already in the 0-255 HA range */
+    } else {
+        /* Read back from HAL (0-100) and scale up to 0-255 for HA */
+        b = (uint8_t)(((uint16_t)GetHAL().getBackLightBrightness() * 255 + 50) / 100);
+    }
+    s_cache_backlight = b;
+
+    /* Retain both so HA re-reads the latest state on reconnect/refresh */
+    esp_mqtt_client_publish(client, s_topic_bl_state, (b > 0) ? "ON" : "OFF", 0, 1, 1);
+
+    char buf[8];
+    snprintf(buf, sizeof(buf), "%u", b);
+    esp_mqtt_client_publish(client, s_topic_bl_brightness_state, buf, 0, 1, 1);
+}
+
+/**
+ * Handle incoming commands for backlight.
+ *   /backlight/set           →  "ON" / "OFF"  (or JSON {"state":…, "brightness":…})
+ *   /backlight/brightness/set →  "128"  (raw number string)
+ *
+ * ⚠ HA range: 0-255   HAL/hardware range: 0-100
+ *    Scaling is done here before passing to the HAL.
+ */
+static void handle_backlight_command(esp_mqtt_client_handle_t client,
+                                     const char *topic, const char *data)
+{
+    bool on_off_topic = (strcmp(topic, s_topic_bl_set) == 0);
+    bool bri_topic    = (strcmp(topic, s_topic_bl_brightness_set) == 0);
+
+    if (!on_off_topic && !bri_topic) return;
+
+    uint8_t bri = s_cache_backlight;  /* start from current */
+
+    if (bri_topic) {
+        /* Brightness-only command: "128" */
+        int v = atoi(data);
+        if (v >= 0 && v <= 255) {
+            bri = (uint8_t)v;
+            if (bri > 0) s_last_backlight_brightness = bri;
+        }
+    } else {
+        /* ON/OFF / JSON command */
+        if (data[0] == '{') {
+            /* JSON payload from HA — extract "state" and optionally "brightness" */
+            cJSON *json = cJSON_Parse(data);
+            if (json) {
+                cJSON *s = cJSON_GetObjectItem(json, "state");
+                if (cJSON_IsString(s)) {
+                    if (strcmp(s->valuestring, "OFF") == 0) {
+                        bri = 0;
+                    } else {
+                        /* ON — restore to last non-zero brightness */
+                        bri = (s_cache_backlight > 0)
+                                  ? s_cache_backlight
+                                  : s_last_backlight_brightness;
+                    }
+                }
+                cJSON *b = cJSON_GetObjectItem(json, "brightness");
+                if (cJSON_IsNumber(b)) {
+                    int v = b->valueint;
+                    if (v >= 0 && v <= 255) {
+                        bri = (uint8_t)v;
+                        if (bri > 0) s_last_backlight_brightness = bri;
+                    }
+                }
+                cJSON_Delete(json);
+            }
+        } else {
+            /* Plain "ON" / "OFF" */
+            if (strcmp(data, "OFF") == 0) {
+                bri = 0;
+            } else if (strcmp(data, "ON") == 0) {
+                /* ON — restore to last non-zero brightness */
+                bri = (s_cache_backlight > 0)
+                          ? s_cache_backlight
+                          : s_last_backlight_brightness;
+            }
+        }
+    }
+
+    /* Scale from HA's 0-255 to the HAL/Backlight 0-100 range */
+    uint8_t bri_scaled = (uint8_t)(((uint16_t)bri * 100 + 127) / 255);
+
+    /* Apply to hardware */
+    GetHAL().setBackLightBrightness(bri_scaled);
+
+    /* Publish state — pass the HA-range bri directly so we don't
+       read back a stale brightness_ during the gradual PWM transition */
+    publish_backlight_state(client, bri);
+}
+
+/* ===========================================================================
+ * Command dispatcher — routes by exact topic match
+ * =========================================================================== */
+
+static void handle_command(esp_mqtt_client_handle_t client,
+                           const char *topic, int topic_len,
+                           const char *data, int data_len)
+{
+    if (topic == nullptr || data == nullptr || topic_len <= 0) {
+        return;
+    }
+
+    /* Build null-terminated copies (topics & data are well under 128 bytes) */
+    char topic_nt[128];
+    char data_nt[128];
+    size_t tlen = (size_t)topic_len < sizeof(topic_nt) - 1 ? (size_t)topic_len : sizeof(topic_nt) - 1;
+    size_t dlen = (size_t)data_len < sizeof(data_nt) - 1 ? (size_t)data_len : sizeof(data_nt) - 1;
+    memcpy(topic_nt, topic, tlen);
+    topic_nt[tlen] = '\0';
+    memcpy(data_nt, data, dlen);
+    data_nt[dlen] = '\0';
+
+    /* Backlight */
+    if (strcmp(topic_nt, s_topic_bl_set) == 0
+     || strcmp(topic_nt, s_topic_bl_brightness_set) == 0) {
+        handle_backlight_command(client, topic_nt, data_nt);
+        return;
+    }
+
+    /* Future components will add their branches here:
+     * if (strcmp(topic_nt, s_topic_servo_pitch_set) == 0) ...
+     * if (strcmp(topic_nt, s_topic_expression_set) == 0) ...
+     * if (strcmp(topic_nt, s_topic_xiaozhi_set) == 0) ...
+     */
+
+    ESP_LOGD(TAG, "Unhandled command topic: %.*s -> %.*s",
+             topic_len, topic, data_len, data);
+}
+
 static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_t event_id, void *event_data)
 {
     esp_mqtt_event_handle_t event = (esp_mqtt_event_handle_t)event_data;
@@ -391,6 +590,12 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
 
         /* Send initial trigger states (touch channels, proximity) */
         publish_initial_trigger_state(client);
+
+        /* ---- Controllable components ---- */
+        publish_backlight_discovery(client);
+        publish_backlight_state(client);
+        esp_mqtt_client_subscribe(client, s_topic_bl_set, 1);
+        esp_mqtt_client_subscribe(client, s_topic_bl_brightness_set, 1);
         break;
 
     case MQTT_EVENT_DISCONNECTED:
@@ -399,9 +604,8 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
         break;
 
     case MQTT_EVENT_DATA:
-        ESP_LOGI(TAG, "Message received: topic=%.*s, data=%.*s",
-                 event->topic_len, event->topic,
-                 event->data_len, event->data);
+        handle_command(client, event->topic, event->topic_len,
+                       event->data, event->data_len);
         /* TODO: handle cover/brightness/volume commands in a later iteration */
         break;
 
@@ -532,11 +736,13 @@ static void mqtt_task(void *arg)
     snprintf(s_topic_proximity, sizeof(s_topic_proximity),
              "%s/proximity/state", s_device_id);
 
+    init_backlight_topics();
+
     esp_mqtt_client_start(s_mqtt_client);
 
     /* ---- Main loop: periodic + trigger-based sensor reporting ---- */
     uint32_t     last_publish       = 0;
-    const uint32_t publish_interval = pdMS_TO_TICKS(30 * 1000);  /* 30 s */
+    const uint32_t publish_interval = pdMS_TO_TICKS(10 * 1000);  /* 30 s */
 
     /* Seed trigger caches so first poll doesn't false-trigger */
     if (s_si12t_ok) {
@@ -555,6 +761,7 @@ static void mqtt_task(void *arg)
         /* ---- Periodic stable-sensor publish (every 30 s) ---- */
         if (s_mqtt_connected && (now - last_publish >= publish_interval)) {
             publish_stable_state(s_mqtt_client);
+            publish_backlight_state(s_mqtt_client);  /* sync backlight retained state */
             last_publish = now;
         }
 
