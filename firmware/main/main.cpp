@@ -9,7 +9,10 @@
 #include <mooncake.h>
 #include <apps/apps.h>
 #include <hal/hal.h>
+#include <hal/hal_auto_start.h>
 #include <settings.h>
+#include <esp_log.h>
+#include <esp_lvgl_port.h>
 
 using namespace mooncake;
 using namespace smooth_ui_toolkit;
@@ -37,6 +40,10 @@ extern "C" void app_main(void)
     GetMooncake().installApp(std::make_unique<AppDance>());
     GetMooncake().installApp(std::make_unique<AppSetup>());
 
+    // Check auto-start — the NVS flag may be set for next boot
+    bool auto_start = hal_auto_start_is_enabled();
+    int settle_frames = auto_start ? 5 : 0;
+
     // Main loop
     while (1) {
         GetHAL().feedTheDog();
@@ -44,13 +51,32 @@ extern "C" void app_main(void)
 
         GetMooncake().update();
 
+        // In auto-start mode: let Mooncake / LVGL run a few frames to settle
+        // before triggering xiaozhi.  This mimics the manual flow (user taps →
+        // requestXiaozhiStart → loop breaks → cleanup → startXiaozhi) and
+        // avoids a crash in lv_event_mark_deleted that occurs when destroying
+        // freshly-created LVGL objects after just one frame.
+        if (settle_frames > 0) {
+            settle_frames--;
+            if (settle_frames == 0) {
+                GetHAL().requestXiaozhiStart();
+                ESP_LOGI("main", "Auto-start xiaozhi triggered after settling");
+            }
+        }
+
         if (GetHAL().isXiaozhiStartRequested()) {
             break;
         }
     }
 
-    // Uninstall all apps and destroy mooncake
-    GetMooncake().uninstallAllApps();
+    // Acquire the LVGL mutex before destroying LVGL objects. This blocks
+    // the LVGL Ticker task (which runs lv_timer_handler()) from accessing
+    // the LVGL state concurrently. We will release it after cleanup.
+    // Note: lvgl_port_lock(0) means wait forever (0→portMAX_DELAY internally).
+    if (lvgl_port_lock(0)) {
+        GetMooncake().uninstallAllApps();
+        lvgl_port_unlock();
+    }
     DestroyMooncake();
 
     Settings mqtt_nvs("mqtt", true);

@@ -142,7 +142,7 @@ static void hal_led_publish_discovery()
     snprintf(unique_id, sizeof(unique_id), "%s_led", s_device_id);
 
     cJSON *root = cJSON_CreateObject();
-    cJSON_AddStringToObject(root, "name",        "StackChan Light Bar");
+    cJSON_AddStringToObject(root, "name",        "Light Bar");
     cJSON_AddStringToObject(root, "unique_id",   unique_id);
     cJSON_AddStringToObject(root, "state_topic", s_topic_status);
     cJSON_AddStringToObject(root, "command_topic", s_topic_set);

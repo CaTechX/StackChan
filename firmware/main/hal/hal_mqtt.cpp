@@ -18,6 +18,7 @@
 #include "hal.h"
 #include "hal_mqtt.h"
 #include "hal_led.h"
+#include "hal_auto_start.h"
 
 #include <cstring>
 #include <cstdio>
@@ -134,7 +135,7 @@ static void publish_discovery(esp_mqtt_client_handle_t client)
     snprintf(unique_id, sizeof(unique_id), "%s_battery", s_device_id);
 
     cJSON *batt = cJSON_CreateObject();
-    cJSON_AddStringToObject(batt, "name",             "StackChan Battery");
+    cJSON_AddStringToObject(batt, "name",             "Battery");
     cJSON_AddStringToObject(batt, "state_topic",      s_state_topic);
     cJSON_AddStringToObject(batt, "value_template",   "{{ value_json.battery }}");
     cJSON_AddStringToObject(batt, "unit_of_measurement", "%");
@@ -162,7 +163,7 @@ static void publish_discovery(esp_mqtt_client_handle_t client)
     snprintf(unique_id, sizeof(unique_id), "%s_charging", s_device_id);
 
     cJSON *chg = cJSON_CreateObject();
-    cJSON_AddStringToObject(chg, "name",           "StackChan Charging");
+    cJSON_AddStringToObject(chg, "name",           "Charging");
     cJSON_AddStringToObject(chg, "state_topic",    s_state_topic);
     cJSON_AddStringToObject(chg, "value_template", "{{ value_json.charging }}");
     cJSON_AddStringToObject(chg, "device_class",   "battery_charging");
@@ -300,7 +301,7 @@ static void publish_light_discovery(esp_mqtt_client_handle_t client)
     snprintf(unique_id, sizeof(unique_id), "%s_ambient_light", s_device_id);
 
     cJSON *root = cJSON_CreateObject();
-    cJSON_AddStringToObject(root, "name",                "StackChan Ambient Light");
+    cJSON_AddStringToObject(root, "name",                "Ambient Light");
     cJSON_AddStringToObject(root, "state_topic",         s_state_topic);
     cJSON_AddStringToObject(root, "value_template",      "{{ value_json.ambient_light }}");
     cJSON_AddStringToObject(root, "unit_of_measurement", "lx");
@@ -330,7 +331,7 @@ static void publish_proximity_discovery(esp_mqtt_client_handle_t client)
     snprintf(unique_id, sizeof(unique_id), "%s_proximity", s_device_id);
 
     cJSON *root = cJSON_CreateObject();
-    cJSON_AddStringToObject(root, "name",                 "StackChan Proximity");
+    cJSON_AddStringToObject(root, "name",                 "Proximity");
     cJSON_AddStringToObject(root, "state_topic",          s_topic_proximity);
     cJSON_AddStringToObject(root, "unit_of_measurement", "counts");
     cJSON_AddStringToObject(root, "unique_id",            unique_id);
@@ -403,7 +404,7 @@ static void publish_backlight_discovery(esp_mqtt_client_handle_t client)
     snprintf(unique_id, sizeof(unique_id), "%s_backlight", s_device_id);
 
     cJSON *root = cJSON_CreateObject();
-    cJSON_AddStringToObject(root, "name",                    "StackChan Backlight");
+    cJSON_AddStringToObject(root, "name",                    "Backlight");
     cJSON_AddStringToObject(root, "unique_id",               unique_id);
     cJSON_AddStringToObject(root, "state_topic",             s_topic_bl_state);
     cJSON_AddStringToObject(root, "command_topic",           s_topic_bl_set);
@@ -561,6 +562,9 @@ static void handle_command(esp_mqtt_client_handle_t client,
     /* LED bar */
     if (hal_led_handle_command(client, topic_nt, data_nt)) return;
 
+    /* Auto-start switch */
+    if (hal_auto_start_handle_command(client, topic_nt, data_nt)) return;
+
     /* Future components will add their branches here:
      * if (strcmp(topic_nt, s_topic_servo_pitch_set) == 0) ...
      * if (strcmp(topic_nt, s_topic_expression_set) == 0) ...
@@ -603,6 +607,9 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
 
         /* ---- LED bar ---- */
         hal_led_on_connected(client);
+
+        /* ---- Auto-start switch ---- */
+        hal_auto_start_on_connected(client);
         break;
 
     case MQTT_EVENT_DISCONNECTED:
@@ -750,6 +757,7 @@ static void mqtt_task(void *arg)
 
     init_backlight_topics();
     hal_led_init(s_mqtt_client, s_device_id);
+    hal_auto_start_init(s_mqtt_client, s_device_id);
 
     esp_mqtt_client_start(s_mqtt_client);
 
