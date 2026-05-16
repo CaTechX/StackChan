@@ -29,7 +29,8 @@ static constexpr uint8_t ALS_MODE     = 1 << 0;
 static constexpr uint8_t ALS_SW_RESET = 1 << 1;
 static constexpr uint8_t ALS_GAIN_B0  = 1 << 2;
 static constexpr uint8_t ALS_GAIN_B1  = 1 << 3;
-// 00 = 1X, 01 = 2X, 10 = 4X, 11 = 8X
+static constexpr uint8_t ALS_GAIN_B2  = 1 << 4;
+// 3-bit gain (bits[4:2]): 0=1X, 1=2X, 2=4X, 3=8X, 6=48X, 7=96X
 
 // -- PS_CONTR bits (0x81) --
 // Bit 1 = PS active (per LTR5XX library: PS_MODE_MASK = 0x02, shift = 1)
@@ -52,8 +53,8 @@ static constexpr uint8_t LED_DUTY_CYCLE     = 0x03;  // 100 %
 static constexpr uint8_t LED_PEAK_CURRENT   = 0x04;  // 100 mA (0x07 = reserved/invalid!)
 static constexpr uint8_t CFG_PS_N_PULSES    = 8;     // 8 pulses (was 1 — too weak)
 static constexpr uint8_t CFG_PS_MEAS_RATE   = 0x02;  // 100 ms per LTR55X table
-static constexpr uint8_t CFG_ALS_GAIN       = 0x00;  // 1X
-static constexpr uint8_t CFG_ALS_MEAS_RATE  = 0x01;  // bits[2:0] = 100 ms
+static constexpr uint8_t CFG_ALS_GAIN       = 0x06;  // 48X (bits[4:2] = 011)
+static constexpr uint8_t CFG_ALS_MEAS_RATE  = 0x01;  // bits[2:0] = 100 ms, bits[5:3] = 100 ms integration
 
 
 LTR553::LTR553(i2c_master_bus_handle_t bus, uint8_t addr)
@@ -173,6 +174,6 @@ float LTR553::calcLux(uint16_t ch0, uint16_t ch1) {
     else if (ratio < 0.85f) comp = 0.5f;
     else                    comp = 0.339f;   // mostly IR
 
-    // 1X gain → gain_factor = 1.0
+    // Raw — no gain normalization; 48X gain makes low-light counts readable.
     return (float)ch0 * comp;
 }

@@ -145,7 +145,7 @@ static void publish_discovery(esp_mqtt_client_handle_t client)
     cJSON_AddStringToObject(dev, "name",        "StackChan");
     cJSON_AddStringToObject(dev, "model",       "StackChan");
     cJSON_AddStringToObject(dev, "manufacturer", "M5Stack");
-    cJSON_AddStringToObject(dev, "sw_version",  "1.4.0");
+    cJSON_AddStringToObject(dev, "sw_version",  "1.4.1");
     cJSON_AddItemToObject(batt, "device", dev);
 
     char *payload = cJSON_PrintUnformatted(batt);
@@ -679,15 +679,20 @@ static void mqtt_task(void *arg)
     }
 
     // Si12T capacitive touch (I2C addr 0x68)
+    // NOTE: The Si12T is *also* initialised and configured by hal_head_touch.cpp
+    // (head_touch_init → si12t_setup with TYPE_LOW / LEVEL_3).  That call
+    // owns the sensor configuration.  We obtain a *separate handle* here so
+    // poll_triggers() can read the OUTPUT register without interfering with
+    // the head-touch sensitivity / channel settings.  Do NOT call si12t_setup()
+    // in this task — that would overwrite the head_touch config and may cause
+    // spurious touch triggers.
     if (i2c_bus) {
         si12t_config_t si12t_cfg = {};
         si12t_cfg.i2c_bus  = i2c_bus;
         si12t_cfg.dev_addr = SI12T_GND_ADDRESS;
         if (si12t_init(&si12t_cfg, &s_si12t) == ESP_OK) {
-            si12t_setup(s_si12t, SI12T_TYPE_HIGH, SI12T_SENSITIVITY_LEVEL_2);
-            si12t_enable_channel(s_si12t);
             s_si12t_ok = true;
-            ESP_LOGI(TAG, "Si12T touch sensor initialized");
+            ESP_LOGI(TAG, "Si12T touch sensor initialised (read-only handle)");
         } else {
             ESP_LOGW(TAG, "Si12T init failed — touch sensor unavailable");
         }
@@ -742,7 +747,7 @@ static void mqtt_task(void *arg)
 
     /* ---- Main loop: periodic + trigger-based sensor reporting ---- */
     uint32_t     last_publish       = 0;
-    const uint32_t publish_interval = pdMS_TO_TICKS(10 * 1000);  /* 30 s */
+    const uint32_t publish_interval = pdMS_TO_TICKS(2 * 1000);  /* 30 s */
 
     /* Seed trigger caches so first poll doesn't false-trigger */
     if (s_si12t_ok) {
