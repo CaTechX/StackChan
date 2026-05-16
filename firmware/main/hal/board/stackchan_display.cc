@@ -559,6 +559,19 @@ void StackChanAvatarDisplay::SetStatus(const char* status)
     if (is_sleeping_) {
         avatar.setSpeech("");
     }
+
+    // Notify LED component of xiaozhi status for LED 0 arbitration.
+    // (must come after xiaozhi's own setRgbColor/refreshRgb so hal_led_apply
+    //  runs last, ensuring the final LED state is correct)
+    extern void hal_led_set_xiaozhi_active(bool active);
+    if (status) {
+        if (strcmp(status, Lang::Strings::LISTENING) == 0
+         || strcmp(status, Lang::Strings::SPEAKING) == 0) {
+            hal_led_set_xiaozhi_active(true);
+        } else if (strcmp(status, Lang::Strings::STANDBY) == 0) {
+            hal_led_set_xiaozhi_active(false);
+        }
+    }
 }
 
 void StackChanAvatarDisplay::ShowNotification(const char* notification, int duration_ms)

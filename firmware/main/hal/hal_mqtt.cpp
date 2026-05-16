@@ -17,6 +17,7 @@
 
 #include "hal.h"
 #include "hal_mqtt.h"
+#include "hal_led.h"
 
 #include <cstring>
 #include <cstdio>
@@ -557,6 +558,9 @@ static void handle_command(esp_mqtt_client_handle_t client,
         return;
     }
 
+    /* LED bar */
+    if (hal_led_handle_command(client, topic_nt, data_nt)) return;
+
     /* Future components will add their branches here:
      * if (strcmp(topic_nt, s_topic_servo_pitch_set) == 0) ...
      * if (strcmp(topic_nt, s_topic_expression_set) == 0) ...
@@ -596,6 +600,9 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
         publish_backlight_state(client);
         esp_mqtt_client_subscribe(client, s_topic_bl_set, 1);
         esp_mqtt_client_subscribe(client, s_topic_bl_brightness_set, 1);
+
+        /* ---- LED bar ---- */
+        hal_led_on_connected(client);
         break;
 
     case MQTT_EVENT_DISCONNECTED:
@@ -742,6 +749,7 @@ static void mqtt_task(void *arg)
              "%s/proximity/state", s_device_id);
 
     init_backlight_topics();
+    hal_led_init(s_mqtt_client, s_device_id);
 
     esp_mqtt_client_start(s_mqtt_client);
 
@@ -773,6 +781,11 @@ static void mqtt_task(void *arg)
         /* ---- Trigger-based: poll touch + proximity, publish on change ---- */
         if (s_mqtt_connected) {
             poll_triggers(s_mqtt_client);
+        }
+
+        /* ---- LED bar: effect animation refresh ---- */
+        if (s_mqtt_connected) {
+            hal_led_tick(s_mqtt_client);
         }
 
         vTaskDelay(pdMS_TO_TICKS(200));
