@@ -19,6 +19,7 @@
 #include "hal_mqtt.h"
 #include "hal_led.h"
 #include "hal_auto_start.h"
+#include "hal_servo_control.h"
 
 #include <cstring>
 #include <cstdio>
@@ -565,6 +566,9 @@ static void handle_command(esp_mqtt_client_handle_t client,
     /* Auto-start switch */
     if (hal_auto_start_handle_command(client, topic_nt, data_nt)) return;
 
+    /* Servo control */
+    if (hal_servo_mqtt_handle_command(client, topic_nt, data_nt)) return;
+
     /* Future components will add their branches here:
      * if (strcmp(topic_nt, s_topic_servo_pitch_set) == 0) ...
      * if (strcmp(topic_nt, s_topic_expression_set) == 0) ...
@@ -610,6 +614,9 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
 
         /* ---- Auto-start switch ---- */
         hal_auto_start_on_connected(client);
+
+        /* ---- Servo control ---- */
+        hal_servo_mqtt_on_connected(client);
         break;
 
     case MQTT_EVENT_DISCONNECTED:
@@ -758,6 +765,7 @@ static void mqtt_task(void *arg)
     init_backlight_topics();
     hal_led_init(s_mqtt_client, s_device_id);
     hal_auto_start_init(s_mqtt_client, s_device_id);
+    hal_servo_mqtt_init(s_mqtt_client, s_device_id);
 
     esp_mqtt_client_start(s_mqtt_client);
 
@@ -794,6 +802,11 @@ static void mqtt_task(void *arg)
         /* ---- LED bar: effect animation refresh ---- */
         if (s_mqtt_connected) {
             hal_led_tick(s_mqtt_client);
+        }
+
+        /* ---- Servo control: periodic state refresh ---- */
+        if (s_mqtt_connected) {
+            hal_servo_mqtt_tick();
         }
 
         vTaskDelay(pdMS_TO_TICKS(200));

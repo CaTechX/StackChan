@@ -9,11 +9,13 @@
 #include <smooth_ui_toolkit.hpp>
 #include <mooncake_log.h>
 #include <settings.h>
+#include <mutex>
 
 using namespace smooth_ui_toolkit;
 using namespace stackchan::motion;
 
 static SCSCL _scs_bus;
+static std::mutex _scs_mutex;
 
 struct ServoConfig_t {
     int id             = -1;
@@ -77,21 +79,32 @@ public:
         // mclog::tagInfo(_tag, "id: {} mapped angle: {}", _id, mapped_angle);
 
         check_mode(Mode::Position);
-        _scs_bus.WritePos(_config.id, mapped_angle, 20, 0);
+        {
+            std::lock_guard<std::mutex> lock(_scs_mutex);
+            _scs_bus.WritePos(_config.id, mapped_angle, 20, 0);
+        }
     }
 
     int getCurrentAngle() override
     {
-        int current_pos = _scs_bus.ReadPos(_config.id);
-        int angle       = (current_pos - _zero_pos) * 5 * 10 / 16;
-        angle           = uitk::clamp(angle, getAngleLimit().x, getAngleLimit().y);
+        int current_pos;
+        {
+            std::lock_guard<std::mutex> lock(_scs_mutex);
+            current_pos = _scs_bus.ReadPos(_config.id);
+        }
+        int angle = (current_pos - _zero_pos) * 5 * 10 / 16;
+        angle     = uitk::clamp(angle, getAngleLimit().x, getAngleLimit().y);
         // mclog::tagInfo(_tag, "id: {} current pos: {} angle: {}", _id, current_pos, angle);
         return angle;
     }
 
     bool is_moving_impl() override
     {
-        int moving = _scs_bus.ReadMove(_config.id);
+        int moving;
+        {
+            std::lock_guard<std::mutex> lock(_scs_mutex);
+            moving = _scs_bus.ReadMove(_config.id);
+        }
         // mclog::tagInfo(_tag, "id: {} moving: {}", _id, moving);
         return moving != 0;
     }
@@ -99,20 +112,32 @@ public:
     void setTorqueEnabled(bool enabled) override
     {
         Servo::setTorqueEnabled(enabled);
-        _scs_bus.EnableTorque(_config.id, enabled ? 1 : 0);
+        {
+            std::lock_guard<std::mutex> lock(_scs_mutex);
+            _scs_bus.EnableTorque(_config.id, enabled ? 1 : 0);
+        }
         // mclog::tagInfo(_tag, "id: {} set torque: {}", _id, enabled);
     }
 
     bool getTorqueEnabled() override
     {
-        int torque_enable = _scs_bus.ReadToqueEnable(_config.id);
+        int torque_enable;
+        {
+            std::lock_guard<std::mutex> lock(_scs_mutex);
+            torque_enable = _scs_bus.ReadToqueEnable(_config.id);
+        }
         // mclog::tagInfo(_tag, "id: {} torque enable: {}", _id, torque_enable);
         return torque_enable > 0;
     }
 
     void setCurrentAngleAsZero() override
     {
-        _zero_pos = _scs_bus.ReadPos(_config.id);
+        int current_pos;
+        {
+            std::lock_guard<std::mutex> lock(_scs_mutex);
+            current_pos = _scs_bus.ReadPos(_config.id);
+        }
+        _zero_pos = current_pos;
 
         Settings settings(_config.settingNs, true);
         settings.SetInt(_config.settingZeroPositionKey, _zero_pos);
@@ -141,7 +166,10 @@ public:
         int mapped_velocity = map_range(velocity, 0, 1000, 0, 1023);
 
         check_mode(Mode::PWM);
-        _scs_bus.WritePWM(_config.id, mapped_velocity);
+        {
+            std::lock_guard<std::mutex> lock(_scs_mutex);
+            _scs_bus.WritePWM(_config.id, mapped_velocity);
+        }
     }
 
 private:
@@ -157,7 +185,10 @@ private:
             return;
         }
 
-        _scs_bus.SwitchMode(_config.id, static_cast<uint8_t>(targetMode));
+        {
+            std::lock_guard<std::mutex> lock(_scs_mutex);
+            _scs_bus.SwitchMode(_config.id, static_cast<uint8_t>(targetMode));
+        }
         _current_mode = targetMode;
     }
 };
