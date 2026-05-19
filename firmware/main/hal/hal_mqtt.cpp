@@ -20,6 +20,7 @@
 #include "hal_led.h"
 #include "hal_auto_start.h"
 #include "hal_servo_control.h"
+#include "hal_expression.h"
 
 #include <cstring>
 #include <cstdio>
@@ -569,11 +570,8 @@ static void handle_command(esp_mqtt_client_handle_t client,
     /* Servo control */
     if (hal_servo_mqtt_handle_command(client, topic_nt, data_nt)) return;
 
-    /* Future components will add their branches here:
-     * if (strcmp(topic_nt, s_topic_servo_pitch_set) == 0) ...
-     * if (strcmp(topic_nt, s_topic_expression_set) == 0) ...
-     * if (strcmp(topic_nt, s_topic_xiaozhi_set) == 0) ...
-     */
+    /* Expression control */
+    if (hal_expression_handle_command(client, topic_nt, data_nt)) return;
 
     ESP_LOGD(TAG, "Unhandled command topic: %.*s -> %.*s",
              topic_len, topic, data_len, data);
@@ -617,6 +615,9 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
 
         /* ---- Servo control ---- */
         hal_servo_mqtt_on_connected(client);
+
+        /* ---- Expression control ---- */
+        hal_expression_on_connected(client);
         break;
 
     case MQTT_EVENT_DISCONNECTED:
@@ -766,6 +767,7 @@ static void mqtt_task(void *arg)
     hal_led_init(s_mqtt_client, s_device_id);
     hal_auto_start_init(s_mqtt_client, s_device_id);
     hal_servo_mqtt_init(s_mqtt_client, s_device_id);
+    hal_expression_init(s_mqtt_client, s_device_id);
 
     esp_mqtt_client_start(s_mqtt_client);
 

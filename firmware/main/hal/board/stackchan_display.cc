@@ -17,6 +17,8 @@
 #include <stackchan/stackchan.h>
 #include <assets/lang_config.h>
 #include <hal/hal.h>
+#include <stackchan/avatar/decorators/decorators.h>
+#include <stackchan/modifiers/blink.h>
 
 using namespace stackchan;
 using namespace stackchan::avatar;
@@ -485,6 +487,15 @@ void StackChanAvatarDisplay::SetStatus(const char* status)
 
     DisplayLockGuard lock(this);
 
+    // Track xiaozhi status for HA avoidance
+    if (strcmp(status, Lang::Strings::LISTENING) == 0) {
+        _xiaozhi_status = XiaozhiStatus::LISTENING;
+    } else if (strcmp(status, Lang::Strings::SPEAKING) == 0) {
+        _xiaozhi_status = XiaozhiStatus::SPEAKING;
+    } else if (strcmp(status, Lang::Strings::STANDBY) == 0) {
+        _xiaozhi_status = XiaozhiStatus::STANDBY;
+    }
+
     bool is_idle      = false;
     bool is_listening = false;
 
@@ -576,4 +587,237 @@ void StackChanAvatarDisplay::SetStatus(const char* status)
 
 void StackChanAvatarDisplay::ShowNotification(const char* notification, int duration_ms)
 {
+}
+
+// ── HA emotion expression control ──────────────────────────────────────────
+
+bool StackChanAvatarDisplay::applyEmotionExpression(const char* emotion, const char* decorator)
+{
+    auto& stackchan = GetStackChan();
+    if (!stackchan.hasAvatar()) return false;
+
+    DisplayLockGuard lock(this);
+
+    if (!stackchan.hasAvatar()) return false;
+    if (hasHighPriorityExpression()) return false;
+
+    auto& avatar = stackchan.avatar();
+
+    // Map emotion string → Emotion enum (same strings as SetEmotion)
+    Emotion parsed;
+    bool known = true;
+    if      (strcmp(emotion, "neutral")  == 0) parsed = Emotion::Neutral;
+    else if (strcmp(emotion, "happy")    == 0) parsed = Emotion::Happy;
+    else if (strcmp(emotion, "laughing") == 0) parsed = Emotion::Happy;
+    else if (strcmp(emotion, "sad")      == 0) parsed = Emotion::Sad;
+    else if (strcmp(emotion, "crying")   == 0) parsed = Emotion::Sad;
+    else if (strcmp(emotion, "angry")    == 0) parsed = Emotion::Angry;
+    else if (strcmp(emotion, "sleepy")   == 0) parsed = Emotion::Sleepy;
+    else if (strcmp(emotion, "doubtful") == 0) parsed = Emotion::Doubt;
+    else known = false;
+
+    if (!known) return false;
+
+    // Cancel any previous HA expression first
+    removeHaDecorators();
+    // Clear any lingering speech bubble (e.g. "Zzz…" from Sleepy)
+    avatar.setSpeech("");
+
+    // Apply base emotion
+    avatar.setEmotion(parsed);
+
+    // Special-case side effects (subset of SetEmotion logic — we skip
+    // side-effects like idle-motion stop that belong to AI/server control)
+    if (parsed == Emotion::Sleepy) {
+        avatar.setSpeech("Zzz…");
+    }
+
+    // Add decorator if specified
+    if (decorator && decorator[0] != '\0') {
+        addHaDecorator(decorator);
+    }
+
+    // Happy always gets heart + shy (blush) decorators
+    if (parsed == Emotion::Happy) {
+        addHaDecorator("heart");
+        addHaDecorator("shy");
+    }
+
+    // Resync blink modifier after emotion change
+    auto* blink = static_cast<BlinkModifier*>(stackchan.getModifier(blink_modifier_id_));
+    if (blink) blink->resyncEyeWeights();
+
+    _ha_active = true;
+    strncpy(_ha_emotion_state, emotion, sizeof(_ha_emotion_state) - 1);
+    _ha_emotion_state[sizeof(_ha_emotion_state) - 1] = '\0';
+
+    return true;
+}
+
+void StackChanAvatarDisplay::clearEmotionExpression()
+{
+    auto& stackchan = GetStackChan();
+    if (!stackchan.hasAvatar()) return;
+
+    DisplayLockGuard lock(this);
+
+    removeHaDecorators();
+
+    auto& avatar = stackchan.avatar();
+    // Clear any lingering speech bubble (e.g. "Zzz…" from Sleepy)
+    avatar.setSpeech("");
+    avatar.setEmotion(Emotion::Neutral);
+
+    // Resync blink
+    auto* blink = static_cast<BlinkModifier*>(stackchan.getModifier(blink_modifier_id_));
+    if (blink) blink->resyncEyeWeights();
+
+    _ha_active = false;
+    _ha_emotion_state[0] = '\0';
+}
+
+bool StackChanAvatarDisplay::isExpressionActive() const
+{
+    return _ha_active;
+}
+
+const char* StackChanAvatarDisplay::getActiveExpressionState() const
+{
+    return _ha_active ? _ha_emotion_state : "idle";
+}
+
+void StackChanAvatarDisplay::applyDizzyPreset()
+{
+    auto& stackchan = GetStackChan();
+    if (!stackchan.hasAvatar()) return;
+
+    DisplayLockGuard lock(this);
+
+    if (hasHighPriorityExpression()) return;
+
+    // Cancel any previous HA expression
+    removeHaDecorators();
+
+    auto& avatar = stackchan.avatar();
+    // Clear any lingering speech bubble (e.g. "Zzz…" from Sleepy)
+    avatar.setSpeech("");
+    avatar.setEmotion(Emotion::Neutral);
+
+    // Close eyes
+    avatar.leftEye().setVisible(false);
+    avatar.rightEye().setVisible(false);
+    _ha_eyes_hidden = true;
+
+    // Open mouth wide (matching IMU Panic animation)
+    avatar.mouth().setWeight(65);
+    avatar.mouth().setRotation(-25);  // Start with initial rotation
+    _ha_mouth_open = true;
+    _ha_mouth_rotation_side = -1;     // Tracks current direction for animation
+
+    // Add dizzy circles + blush decorators
+    addHaDecorator("dizzy");
+    addHaDecorator("shy");
+
+    _ha_active = true;
+    strncpy(_ha_emotion_state, "dizzy", sizeof(_ha_emotion_state) - 1);
+    _ha_emotion_state[sizeof(_ha_emotion_state) - 1] = '\0';
+}
+
+// ── Dizzy mouth animation (periodic toggle) ────────────────────────────────
+
+void StackChanAvatarDisplay::animateDizzyMouth()
+{
+    auto& stackchan = GetStackChan();
+    if (!stackchan.hasAvatar()) return;
+
+    DisplayLockGuard lock(this);
+
+    auto& avatar = stackchan.avatar();
+    // Flip rotation direction: -25° ↔ +25°
+    _ha_mouth_rotation_side = -_ha_mouth_rotation_side;
+    avatar.mouth().setRotation(25 * _ha_mouth_rotation_side);
+    avatar.mouth().setWeight(65);  // Keep mouth open
+}
+
+// ── Private helpers ────────────────────────────────────────────────────────
+
+void StackChanAvatarDisplay::addHaDecorator(const char* decorator)
+{
+    auto& stackchan = GetStackChan();
+    if (!stackchan.hasAvatar()) return;
+
+    auto& avatar = stackchan.avatar();
+    int id = -1;
+
+    if (strcmp(decorator, "heart") == 0) {
+        id = avatar.addDecorator(
+            std::make_unique<HeartDecorator>(lv_screen_active(), 0, 500));
+    } else if (strcmp(decorator, "angry") == 0) {
+        id = avatar.addDecorator(
+            std::make_unique<AngryDecorator>(lv_screen_active(), 0, 500));
+    } else if (strcmp(decorator, "sweat") == 0) {
+        id = avatar.addDecorator(
+            std::make_unique<SweatDecorator>(lv_screen_active(), 0));
+    } else if (strcmp(decorator, "shy") == 0) {
+        id = avatar.addDecorator(
+            std::make_unique<ShyDecorator>(lv_screen_active(), 0));
+    } else if (strcmp(decorator, "dizzy") == 0) {
+        id = avatar.addDecorator(
+            std::make_unique<DizzyDecorator>(lv_screen_active(), 0, 100));
+    }
+
+    if (id >= 0 && _ha_decorator_count < 4) {
+        _ha_decorator_ids[_ha_decorator_count++] = id;
+    }
+}
+
+void StackChanAvatarDisplay::removeHaDecorators()
+{
+    auto& stackchan = GetStackChan();
+    if (!stackchan.hasAvatar()) return;
+
+    auto& avatar = stackchan.avatar();
+    for (int i = 0; i < _ha_decorator_count; i++) {
+        if (_ha_decorator_ids[i] >= 0) {
+            avatar.removeDecorator(_ha_decorator_ids[i]);
+            _ha_decorator_ids[i] = -1;
+        }
+    }
+    _ha_decorator_count = 0;
+
+    // Restore eye visibility (dizzy preset)
+    if (_ha_eyes_hidden) {
+        auto& avatar = stackchan.avatar();
+        avatar.leftEye().setVisible(true);
+        avatar.rightEye().setVisible(true);
+        _ha_eyes_hidden = false;
+    }
+
+    // Restore mouth (dizzy preset)
+    if (_ha_mouth_open) {
+        auto& avatar = stackchan.avatar();
+        avatar.mouth().setWeight(0);
+        avatar.mouth().setRotation(0);
+        _ha_mouth_open = false;
+    }
+}
+
+bool StackChanAvatarDisplay::hasHighPriorityExpression()
+{
+    // Check xiaozhi speaking / listening state
+    if (_xiaozhi_status == XiaozhiStatus::LISTENING ||
+        _xiaozhi_status == XiaozhiStatus::SPEAKING) {
+        ESP_LOGW(TAG, "HA expression blocked: xiaozhi is active (status=%d)",
+                 static_cast<int>(_xiaozhi_status));
+        return true;
+    }
+
+    // Check IMU shake via avatar modify-lock
+    auto& stackchan = GetStackChan();
+    if (stackchan.hasAvatar() && stackchan.avatar().isModifyLocked()) {
+        ESP_LOGW(TAG, "HA expression blocked: avatar modify-locked (IMU shake)");
+        return true;
+    }
+
+    return false;
 }
