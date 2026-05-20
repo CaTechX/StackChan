@@ -48,13 +48,13 @@ static esp_mqtt_client_handle_t s_mqtt_client   = nullptr;
 static volatile bool           s_task_running   = false;
 static volatile bool           s_mqtt_connected = false;
 
-static char s_device_id[32] = {0};     /* e.g. "stackchan_aabbccddeeff" */
-static char s_state_topic[64] = {0};   /* e.g. "stackchan_aabbccddeeff/state" */
-static char s_avail_topic[64] = {0};   /* e.g. "stackchan_aabbccddeeff/availability" */
+static constexpr const char* s_device_id   = "stackchan";
+static char s_state_topic[48] = {0};   /* "stackchan/state" */
+static char s_avail_topic[48] = {0};   /* "stackchan/availability" */
 
 /* Per-sensor state topics for trigger-based sensors */
-static char s_topic_touch[3][64]  = {};
-static char s_topic_proximity[64] = {};
+static char s_topic_touch[3][48]  = {};
+static char s_topic_proximity[48] = {};
 
 /* Backlight control topics */
 static char s_topic_bl_state[64];         /* stackchan_xxx/backlight/state         */
@@ -764,16 +764,16 @@ static void mqtt_task(void *arg)
              "%s/proximity/state", s_device_id);
 
     init_backlight_topics();
-    hal_led_init(s_mqtt_client, s_device_id);
-    hal_auto_start_init(s_mqtt_client, s_device_id);
-    hal_servo_mqtt_init(s_mqtt_client, s_device_id);
-    hal_expression_init(s_mqtt_client, s_device_id);
+    hal_led_init(s_mqtt_client);
+    hal_auto_start_init(s_mqtt_client);
+    hal_servo_mqtt_init(s_mqtt_client);
+    hal_expression_init(s_mqtt_client);
 
     esp_mqtt_client_start(s_mqtt_client);
 
     /* ---- Main loop: periodic + trigger-based sensor reporting ---- */
-    uint32_t     last_publish       = 0;
-    const uint32_t publish_interval = pdMS_TO_TICKS(2 * 1000);  /* 30 s */
+    uint32_t       last_publish       = 0;
+    const uint32_t publish_interval   = pdMS_TO_TICKS(2 * 1000);  /* 30 s */
 
     /* Seed trigger caches so first poll doesn't false-trigger */
     if (s_si12t_ok) {
@@ -834,11 +834,7 @@ void Hal::startMqtt()
         return;
     }
 
-    /* Build stable device ID from the factory MAC address */
-    std::string mac = getFactoryMacString("");
-    for (auto &c : mac) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-
-    snprintf(s_device_id,  sizeof(s_device_id),  "stackchan_%s", mac.c_str());
+    /* Build MQTT topic strings using the fixed device ID */
     snprintf(s_state_topic, sizeof(s_state_topic), "%s/state",       s_device_id);
     snprintf(s_avail_topic, sizeof(s_avail_topic), "%s/availability", s_device_id);
 

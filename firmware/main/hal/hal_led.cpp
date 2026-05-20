@@ -37,9 +37,9 @@ static const char *TAG = "HalLed";
 static esp_mqtt_client_handle_t s_client    = nullptr;
 
 /* MQTT topic names (built from device_id at init) */
-static char s_topic_set[64];
-static char s_topic_status[64];
-static char s_device_id[32];
+static constexpr const char* DEVICE_ID  = "stackchan";
+static char s_topic_set[48];
+static char s_topic_status[48];
 
 /* HA light state */
 static bool     s_ha_active   = false;      // light ON/OFF
@@ -139,7 +139,7 @@ static void hal_led_publish_state()
 static void hal_led_publish_discovery()
 {
     char unique_id[64];
-    snprintf(unique_id, sizeof(unique_id), "%s_led", s_device_id);
+    snprintf(unique_id, sizeof(unique_id), "%s_led", DEVICE_ID);
 
     cJSON *root = cJSON_CreateObject();
     cJSON_AddStringToObject(root, "name",        "Light Bar");
@@ -169,7 +169,7 @@ static void hal_led_publish_discovery()
 
     /* Device (groups under the same StackChan device in HA) */
     cJSON *dev = cJSON_CreateObject();
-    cJSON_AddStringToObject(dev, "identifiers",  s_device_id);
+    cJSON_AddStringToObject(dev, "identifiers",  DEVICE_ID);
     cJSON_AddStringToObject(dev, "name",         "StackChan");
     cJSON_AddStringToObject(dev, "model",        "StackChan");
     cJSON_AddStringToObject(dev, "manufacturer", "M5Stack");
@@ -293,14 +293,12 @@ static void twinkle_tick()  { /* TODO */ }
  *  Public API
  * =========================================================================== */
 
-void hal_led_init(esp_mqtt_client_handle_t client, const char *device_id)
+void hal_led_init(esp_mqtt_client_handle_t client)
 {
     s_client = client;
-    strncpy(s_device_id, device_id, sizeof(s_device_id) - 1);
-    s_device_id[sizeof(s_device_id) - 1] = '\0';
 
-    snprintf(s_topic_set,    sizeof(s_topic_set),    "%s/led/set",    device_id);
-    snprintf(s_topic_status, sizeof(s_topic_status), "%s/led/status", device_id);
+    snprintf(s_topic_set,    sizeof(s_topic_set),    "%s/led/set",    DEVICE_ID);
+    snprintf(s_topic_status, sizeof(s_topic_status), "%s/led/status", DEVICE_ID);
 
     ESP_LOGI(TAG, "Init — set=%s  status=%s", s_topic_set, s_topic_status);
 }

@@ -6,7 +6,7 @@
  * @brief Initialise LED component — set up topic names.
  * Call from mqtt_task() BEFORE esp_mqtt_client_start().
  */
-void hal_led_init(esp_mqtt_client_handle_t client, const char *device_id);
+void hal_led_init(esp_mqtt_client_handle_t client);
 
 /**
  * @brief Called on MQTT_EVENT_CONNECTED — publish HA discovery, subscribe,

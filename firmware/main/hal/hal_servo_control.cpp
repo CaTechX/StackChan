@@ -66,16 +66,16 @@ static const char *TAG = "HalServoCtrl";
  * Internal state (file-scope)
  * ------------------------------------------------------------------------- */
 
-static esp_mqtt_client_handle_t s_client     = nullptr;
-static char                     s_device_id[64]              = {0};
-static char                     s_topic_yaw_status[128]      = {0};
-static char                     s_topic_yaw_set[128]         = {0};
-static char                     s_topic_pitch_status[128]    = {0};
-static char                     s_topic_pitch_set[128]       = {0};
-static char                     s_topic_speed_status[128]    = {0};
-static char                     s_topic_speed_set[128]       = {0};
-static char                     s_topic_home_set[128]        = {0};
-static char                     s_topic_position_set[128]    = {0};
+static esp_mqtt_client_handle_t s_client    = nullptr;
+static constexpr const char*    DEVICE_ID   = "stackchan";
+static char s_topic_yaw_status[64]     = {0};
+static char s_topic_yaw_set[64]        = {0};
+static char s_topic_pitch_status[64]   = {0};
+static char s_topic_pitch_set[64]      = {0};
+static char s_topic_speed_status[64]   = {0};
+static char s_topic_speed_set[64]      = {0};
+static char s_topic_home_set[64]       = {0};
+static char s_topic_position_set[64]   = {0};
 
 /* Movement tracking — set true when a movement command is issued, cleared
  * by tick() once the spring animation has settled. */
@@ -240,20 +240,19 @@ static void handle_home_command(const char *data)
  * Public API
  * ------------------------------------------------------------------------- */
 
-void hal_servo_mqtt_init(esp_mqtt_client_handle_t client, const char *device_id)
+void hal_servo_mqtt_init(esp_mqtt_client_handle_t client)
 {
     s_client = client;
-    strncpy(s_device_id, device_id, sizeof(s_device_id) - 1);
 
-    /* Build topic strings from device_id */
-    snprintf(s_topic_yaw_status,   sizeof(s_topic_yaw_status),   "%s/servo/yaw/status",   device_id);
-    snprintf(s_topic_yaw_set,     sizeof(s_topic_yaw_set),       "%s/servo/yaw/set",      device_id);
-    snprintf(s_topic_pitch_status, sizeof(s_topic_pitch_status), "%s/servo/pitch/status", device_id);
-    snprintf(s_topic_pitch_set,   sizeof(s_topic_pitch_set),     "%s/servo/pitch/set",    device_id);
-    snprintf(s_topic_speed_status, sizeof(s_topic_speed_status), "%s/servo/speed/status", device_id);
-    snprintf(s_topic_speed_set,   sizeof(s_topic_speed_set),     "%s/servo/speed/set",    device_id);
-    snprintf(s_topic_home_set,    sizeof(s_topic_home_set),      "%s/servo/home/set",     device_id);
-    snprintf(s_topic_position_set, sizeof(s_topic_position_set), "%s/servo/position/set", device_id);
+    /* Build topic strings */
+    snprintf(s_topic_yaw_status,   sizeof(s_topic_yaw_status),   "%s/servo/yaw/status",   DEVICE_ID);
+    snprintf(s_topic_yaw_set,     sizeof(s_topic_yaw_set),       "%s/servo/yaw/set",      DEVICE_ID);
+    snprintf(s_topic_pitch_status, sizeof(s_topic_pitch_status), "%s/servo/pitch/status", DEVICE_ID);
+    snprintf(s_topic_pitch_set,   sizeof(s_topic_pitch_set),     "%s/servo/pitch/set",    DEVICE_ID);
+    snprintf(s_topic_speed_status, sizeof(s_topic_speed_status), "%s/servo/speed/status", DEVICE_ID);
+    snprintf(s_topic_speed_set,   sizeof(s_topic_speed_set),     "%s/servo/speed/set",    DEVICE_ID);
+    snprintf(s_topic_home_set,    sizeof(s_topic_home_set),      "%s/servo/home/set",     DEVICE_ID);
+    snprintf(s_topic_position_set, sizeof(s_topic_position_set), "%s/servo/position/set", DEVICE_ID);
 }
 
 /* -------------------------------------------------------------------------
@@ -266,8 +265,8 @@ static void publish_servo_discovery(esp_mqtt_client_handle_t client)
 
     /* ---- Yaw angle (number) ---- */
     snprintf(topic, sizeof(topic),
-             "homeassistant/number/%s_servo_yaw/config", s_device_id);
-    snprintf(unique_id, sizeof(unique_id), "%s_servo_yaw", s_device_id);
+             "homeassistant/number/%s_servo_yaw/config", DEVICE_ID);
+    snprintf(unique_id, sizeof(unique_id), "%s_servo_yaw", DEVICE_ID);
 
     cJSON *yaw = cJSON_CreateObject();
     cJSON_AddStringToObject(yaw, "name",              "Servo Yaw Angle");
@@ -280,7 +279,7 @@ static void publish_servo_discovery(esp_mqtt_client_handle_t client)
     cJSON_AddNumberToObject(yaw, "step",              1);
 
     cJSON *dev = cJSON_CreateObject();
-    cJSON_AddStringToObject(dev, "identifiers", s_device_id);
+    cJSON_AddStringToObject(dev, "identifiers", DEVICE_ID);
     cJSON_AddStringToObject(dev, "name",        "StackChan");
     cJSON_AddStringToObject(dev, "model",       "StackChan");
     cJSON_AddStringToObject(dev, "manufacturer", "M5Stack");
@@ -295,8 +294,8 @@ static void publish_servo_discovery(esp_mqtt_client_handle_t client)
 
     /* ---- Pitch angle (number) ---- */
     snprintf(topic, sizeof(topic),
-             "homeassistant/number/%s_servo_pitch/config", s_device_id);
-    snprintf(unique_id, sizeof(unique_id), "%s_servo_pitch", s_device_id);
+             "homeassistant/number/%s_servo_pitch/config", DEVICE_ID);
+    snprintf(unique_id, sizeof(unique_id), "%s_servo_pitch", DEVICE_ID);
 
     cJSON *pitch = cJSON_CreateObject();
     cJSON_AddStringToObject(pitch, "name",              "Servo Pitch Angle");
@@ -309,7 +308,7 @@ static void publish_servo_discovery(esp_mqtt_client_handle_t client)
     cJSON_AddNumberToObject(pitch, "step",              1);
 
     dev = cJSON_CreateObject();
-    cJSON_AddStringToObject(dev, "identifiers", s_device_id);
+    cJSON_AddStringToObject(dev, "identifiers", DEVICE_ID);
     cJSON_AddStringToObject(dev, "name",        "StackChan");
     cJSON_AddItemToObject(pitch, "device", dev);
 
@@ -322,8 +321,8 @@ static void publish_servo_discovery(esp_mqtt_client_handle_t client)
 
     /* ---- Speed (number) ---- */
     snprintf(topic, sizeof(topic),
-             "homeassistant/number/%s_servo_speed/config", s_device_id);
-    snprintf(unique_id, sizeof(unique_id), "%s_servo_speed", s_device_id);
+             "homeassistant/number/%s_servo_speed/config", DEVICE_ID);
+    snprintf(unique_id, sizeof(unique_id), "%s_servo_speed", DEVICE_ID);
 
     cJSON *spd = cJSON_CreateObject();
     cJSON_AddStringToObject(spd, "name",              "Servo Speed");
@@ -337,7 +336,7 @@ static void publish_servo_discovery(esp_mqtt_client_handle_t client)
     cJSON_AddNumberToObject(spd, "initial",           300);
 
     dev = cJSON_CreateObject();
-    cJSON_AddStringToObject(dev, "identifiers", s_device_id);
+    cJSON_AddStringToObject(dev, "identifiers", DEVICE_ID);
     cJSON_AddStringToObject(dev, "name",        "StackChan");
     cJSON_AddItemToObject(spd, "device", dev);
 
@@ -350,8 +349,8 @@ static void publish_servo_discovery(esp_mqtt_client_handle_t client)
 
     /* ---- Go Home (button) ---- */
     snprintf(topic, sizeof(topic),
-             "homeassistant/button/%s_servo_home/config", s_device_id);
-    snprintf(unique_id, sizeof(unique_id), "%s_servo_home", s_device_id);
+             "homeassistant/button/%s_servo_home/config", DEVICE_ID);
+    snprintf(unique_id, sizeof(unique_id), "%s_servo_home", DEVICE_ID);
 
     cJSON *home = cJSON_CreateObject();
     cJSON_AddStringToObject(home, "name",              "Go Home");
@@ -361,7 +360,7 @@ static void publish_servo_discovery(esp_mqtt_client_handle_t client)
     cJSON_AddStringToObject(home, "mode",              "restart");
 
     dev = cJSON_CreateObject();
-    cJSON_AddStringToObject(dev, "identifiers", s_device_id);
+    cJSON_AddStringToObject(dev, "identifiers", DEVICE_ID);
     cJSON_AddStringToObject(dev, "name",        "StackChan");
     cJSON_AddItemToObject(home, "device", dev);
 
@@ -372,7 +371,7 @@ static void publish_servo_discovery(esp_mqtt_client_handle_t client)
     }
     cJSON_Delete(home);
 
-    ESP_LOGI(TAG, "Servo HA Discovery published for %s", s_device_id);
+    ESP_LOGI(TAG, "Servo HA Discovery published for %s", DEVICE_ID);
 }
 
 void hal_servo_mqtt_on_connected(esp_mqtt_client_handle_t client)

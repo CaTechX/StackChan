@@ -15,20 +15,20 @@ static const char* TAG = "HalExpression";
 // ── File-scope state ───────────────────────────────────────────────────────
 
 static esp_mqtt_client_handle_t s_client      = nullptr;
-static char                     s_device_id[64] = {0};
+static constexpr const char*    DEVICE_ID     = "stackchan";
 
 // Topic buffers
-static char s_topic_select_set[128]    = {0};
-static char s_topic_select_state[128]  = {0};
-static char s_topic_number_set[128]    = {0};
-static char s_topic_number_state[128]  = {0};
+static char s_topic_select_set[64]    = {0};
+static char s_topic_select_state[64]  = {0};
+static char s_topic_number_set[64]    = {0};
+static char s_topic_number_state[64]  = {0};
 
 // Cached duration (seconds), default 8 s
 static uint32_t       s_duration_sec     = 8;
 static esp_timer_handle_t s_expire_timer = nullptr;
 
 // Cached last-option published so we can publish "idle" on expiry
-static char s_last_option[32] = {0};
+static char s_last_option[16] = {0};
 
 // Periodic timer for dizzy mouth animation (600ms toggle)
 static esp_timer_handle_t s_mouth_toggle_timer = nullptr;
@@ -188,7 +188,7 @@ static void publish_discovery_select()
 
     cJSON_AddStringToObject(root, "name",         "Expression");
     char unique_id[128];
-    snprintf(unique_id, sizeof(unique_id), "%s_expression", s_device_id);
+    snprintf(unique_id, sizeof(unique_id), "%s_expression", DEVICE_ID);
     cJSON_AddStringToObject(root, "unique_id", unique_id);
     cJSON_AddStringToObject(root, "command_topic", s_topic_select_set);
     cJSON_AddStringToObject(root, "state_topic",  s_topic_select_state);
@@ -205,7 +205,7 @@ static void publish_discovery_select()
 
     // Device info (same as other HA entities)
     cJSON* dev = cJSON_CreateObject();
-    cJSON_AddStringToObject(dev, "identifiers",  s_device_id);
+    cJSON_AddStringToObject(dev, "identifiers",  DEVICE_ID);
     cJSON_AddStringToObject(dev, "name",         "StackChan");
     cJSON_AddStringToObject(dev, "model",        "StackChan");
     cJSON_AddStringToObject(dev, "manufacturer", "M5Stack");
@@ -215,7 +215,7 @@ static void publish_discovery_select()
     if (payload) {
         char topic[256];
         snprintf(topic, sizeof(topic),
-            "homeassistant/select/%s_expression/config", s_device_id);
+            "homeassistant/select/%s_expression/config", DEVICE_ID);
         esp_mqtt_client_publish(s_client, topic, payload, 0, 1, 1);
         ESP_LOGI(TAG, "Discovery published: %s", topic);
         free(payload);
@@ -228,7 +228,7 @@ static void publish_discovery_number()
     cJSON* root = cJSON_CreateObject();
 
     char unique_id[128];
-    snprintf(unique_id, sizeof(unique_id), "%s_expression_duration", s_device_id);
+    snprintf(unique_id, sizeof(unique_id), "%s_expression_duration", DEVICE_ID);
     cJSON_AddStringToObject(root, "name",         "Expression Duration");
     cJSON_AddStringToObject(root, "unique_id",    unique_id);
     cJSON_AddStringToObject(root, "command_topic", s_topic_number_set);
@@ -241,7 +241,7 @@ static void publish_discovery_number()
 
     // Device info (same as select entity)
     cJSON* dev = cJSON_CreateObject();
-    cJSON_AddStringToObject(dev, "identifiers",  s_device_id);
+    cJSON_AddStringToObject(dev, "identifiers",  DEVICE_ID);
     cJSON_AddStringToObject(dev, "name",         "StackChan");
     cJSON_AddStringToObject(dev, "model",        "StackChan");
     cJSON_AddStringToObject(dev, "manufacturer", "M5Stack");
@@ -251,7 +251,7 @@ static void publish_discovery_number()
     if (payload) {
         char topic[256];
         snprintf(topic, sizeof(topic),
-            "homeassistant/number/%s_expression_duration/config", s_device_id);
+            "homeassistant/number/%s_expression_duration/config", DEVICE_ID);
         esp_mqtt_client_publish(s_client, topic, payload, 0, 1, 1);
         ESP_LOGI(TAG, "Discovery published: %s", topic);
         free(payload);
@@ -318,21 +318,19 @@ static void handle_duration_set(esp_mqtt_client_handle_t client, const char* dat
 
 // ── Public API ─────────────────────────────────────────────────────────────
 
-void hal_expression_init(esp_mqtt_client_handle_t client, const char* device_id)
+void hal_expression_init(esp_mqtt_client_handle_t client)
 {
     s_client = client;
-    strncpy(s_device_id, device_id, sizeof(s_device_id) - 1);
-    s_device_id[sizeof(s_device_id) - 1] = '\0';
 
     // Build topic strings
     snprintf(s_topic_select_set,   sizeof(s_topic_select_set),
-             "%s/expression/set",       device_id);
+             "%s/expression/set",       DEVICE_ID);
     snprintf(s_topic_select_state, sizeof(s_topic_select_state),
-             "%s/expression/state",     device_id);
+             "%s/expression/state",     DEVICE_ID);
     snprintf(s_topic_number_set,   sizeof(s_topic_number_set),
-             "%s/expression/duration/set",  device_id);
+             "%s/expression/duration/set",  DEVICE_ID);
     snprintf(s_topic_number_state, sizeof(s_topic_number_state),
-             "%s/expression/duration/state", device_id);
+             "%s/expression/duration/state", DEVICE_ID);
 
     // Create one-shot timer for emotion expiry
     esp_timer_create_args_t timer_args = {};

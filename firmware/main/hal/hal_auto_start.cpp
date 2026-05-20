@@ -29,9 +29,9 @@ static const char *TAG = "HalAutoStart";
  *  Static state
  * --------------------------------------------------------------------------- */
 static esp_mqtt_client_handle_t s_client      = nullptr;
-static char s_topic_set[64];
-static char s_topic_status[64];
-static char s_device_id[32];
+static constexpr const char*    DEVICE_ID     = "stackchan";
+static char s_topic_set[48];
+static char s_topic_status[48];
 
 static constexpr const char *NVS_NS   = "xiaozhi";
 static constexpr const char *NVS_KEY  = "auto_start";
@@ -67,7 +67,7 @@ static void publish_state()
 static void publish_discovery()
 {
     char unique_id[64], topic[128];
-    snprintf(unique_id, sizeof(unique_id), "%s_auto_xiaozhi", s_device_id);
+    snprintf(unique_id, sizeof(unique_id), "%s_auto_xiaozhi", DEVICE_ID);
 
     cJSON *root = cJSON_CreateObject();
     cJSON_AddStringToObject(root, "name",         "Auto-start xiaozhi");
@@ -79,7 +79,7 @@ static void publish_discovery()
 
     /* Group under the same StackChan device */
     cJSON *dev = cJSON_CreateObject();
-    cJSON_AddStringToObject(dev, "identifiers",  s_device_id);
+    cJSON_AddStringToObject(dev, "identifiers",  DEVICE_ID);
     cJSON_AddStringToObject(dev, "name",         "StackChan");
     cJSON_AddStringToObject(dev, "model",        "StackChan");
     cJSON_AddStringToObject(dev, "manufacturer", "M5Stack");
@@ -118,16 +118,14 @@ static void handle_command(const char *data)
  *  Public API
  * --------------------------------------------------------------------------- */
 
-void hal_auto_start_init(esp_mqtt_client_handle_t client, const char *device_id)
+void hal_auto_start_init(esp_mqtt_client_handle_t client)
 {
     s_client = client;
-    strncpy(s_device_id, device_id, sizeof(s_device_id) - 1);
-    s_device_id[sizeof(s_device_id) - 1] = '\0';
 
     snprintf(s_topic_set,    sizeof(s_topic_set),
-             "%s/auto_xiaozhi/set",    device_id);
+             "%s/auto_xiaozhi/set",    DEVICE_ID);
     snprintf(s_topic_status, sizeof(s_topic_status),
-             "%s/auto_xiaozhi/status", device_id);
+             "%s/auto_xiaozhi/status", DEVICE_ID);
 
     ESP_LOGI(TAG, "Init — set=%s  status=%s", s_topic_set, s_topic_status);
 }

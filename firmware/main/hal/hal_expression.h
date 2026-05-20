@@ -15,6 +15,6 @@
  *   - State topics use QoS 1 + retain.
  */
 
-void hal_expression_init(esp_mqtt_client_handle_t client, const char* device_id);
+void hal_expression_init(esp_mqtt_client_handle_t client);
 void hal_expression_on_connected(esp_mqtt_client_handle_t client);
 bool hal_expression_handle_command(esp_mqtt_client_handle_t client, const char* topic, const char* data);

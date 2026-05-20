@@ -6,7 +6,7 @@
  * @brief Init — set up MQTT topic names.  Call from mqtt_task()
  *        BEFORE esp_mqtt_client_start().
  */
-void hal_auto_start_init(esp_mqtt_client_handle_t client, const char *device_id);
+void hal_auto_start_init(esp_mqtt_client_handle_t client);
 
 /**
  * @brief MQTT_EVENT_CONNECTED — publish discovery, subscribe, sync state.
