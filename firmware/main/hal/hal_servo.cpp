@@ -9,11 +9,13 @@
 #include <smooth_ui_toolkit.hpp>
 #include <mooncake_log.h>
 #include <settings.h>
+#include <mutex>
 
 using namespace smooth_ui_toolkit;
 using namespace stackchan::motion;
 
 static SCSCL _scs_bus;
+static std::mutex _scs_mutex;
 
 struct ServoConfig_t {
     int id             = -1;
@@ -83,12 +85,19 @@ public:
         }
 
         check_mode(Mode::Position);
-        _scs_bus.WritePos(_config.id, mapped_angle, 20, 0);
+        {
+            std::lock_guard<std::mutex> lock(_scs_mutex);
+            _scs_bus.WritePos(_config.id, mapped_angle, 20, 0);
+        }
     }
 
     int getCurrentAngle() override
     {
-        int current_pos = _scs_bus.ReadPos(_config.id);
+        int current_pos;
+        {
+            std::lock_guard<std::mutex> lock(_scs_mutex);
+            current_pos = _scs_bus.ReadPos(_config.id);
+        }
         if (!is_raw_pos_valid(current_pos)) {
             int fallback_angle = uitk::clamp(Servo::getCurrentAngle(), getAngleLimit().x, getAngleLimit().y);
             mclog::tagWarn(_tag, "id: {} ignore invalid current pos: {}, fallback angle: {}", _config.id, current_pos,
@@ -104,7 +113,11 @@ public:
 
     bool is_moving_impl() override
     {
-        int moving = _scs_bus.ReadMove(_config.id);
+        int moving;
+        {
+            std::lock_guard<std::mutex> lock(_scs_mutex);
+            moving = _scs_bus.ReadMove(_config.id);
+        }
         // mclog::tagInfo(_tag, "id: {} moving: {}", _id, moving);
         return moving != 0;
     }
@@ -112,20 +125,31 @@ public:
     void setTorqueEnabled(bool enabled) override
     {
         Servo::setTorqueEnabled(enabled);
-        _scs_bus.EnableTorque(_config.id, enabled ? 1 : 0);
+        {
+            std::lock_guard<std::mutex> lock(_scs_mutex);
+            _scs_bus.EnableTorque(_config.id, enabled ? 1 : 0);
+        }
         // mclog::tagInfo(_tag, "id: {} set torque: {}", _id, enabled);
     }
 
     bool getTorqueEnabled() override
     {
-        int torque_enable = _scs_bus.ReadToqueEnable(_config.id);
+        int torque_enable;
+        {
+            std::lock_guard<std::mutex> lock(_scs_mutex);
+            torque_enable = _scs_bus.ReadToqueEnable(_config.id);
+        }
         // mclog::tagInfo(_tag, "id: {} torque enable: {}", _id, torque_enable);
         return torque_enable > 0;
     }
 
     void setCurrentAngleAsZero() override
     {
-        int current_pos = _scs_bus.ReadPos(_config.id);
+        int current_pos;
+        {
+            std::lock_guard<std::mutex> lock(_scs_mutex);
+            current_pos = _scs_bus.ReadPos(_config.id);
+        }
         if (!is_raw_pos_valid(current_pos)) {
             mclog::tagWarn(_tag, "id: {} ignore invalid zero calibration pos: {}, keep zero pos: {}", _config.id,
                            current_pos, _zero_pos);
@@ -163,7 +187,10 @@ public:
         int mapped_velocity = map_range(velocity, 0, 1000, 0, 1023);
 
         check_mode(Mode::PWM);
-        _scs_bus.WritePWM(_config.id, mapped_velocity);
+        {
+            std::lock_guard<std::mutex> lock(_scs_mutex);
+            _scs_bus.WritePWM(_config.id, mapped_velocity);
+        }
     }
 
 private:
@@ -232,14 +259,18 @@ private:
         }
         _last_stall_check_tick = now;
 
-        if (_scs_bus.FeedBack(_config.id) < 0) {
-            reset_stall_detection();
-            return false;
-        }
+        int current_raw_pos = 0, current_abs = 0, load_abs = 0;
+        {
+            std::lock_guard<std::mutex> lock(_scs_mutex);
+            if (_scs_bus.FeedBack(_config.id) < 0) {
+                reset_stall_detection();
+                return false;
+            }
 
-        const int current_raw_pos = _scs_bus.ReadPos(-1);
-        const int current_abs     = abs_int(_scs_bus.ReadCurrent(-1));
-        const int load_abs        = abs_int(_scs_bus.ReadLoad(-1));
+            current_raw_pos = _scs_bus.ReadPos(-1);
+            current_abs     = abs_int(_scs_bus.ReadCurrent(-1));
+            load_abs        = abs_int(_scs_bus.ReadLoad(-1));
+        }
 
         if (!is_raw_pos_valid(current_raw_pos)) {
             reset_stall_detection();
@@ -310,7 +341,10 @@ private:
         reset_stall_detection();
 
         check_mode(Mode::Position);
-        _scs_bus.WritePos(_config.id, raw_pos, 20, 0);
+        {
+            std::lock_guard<std::mutex> lock(_scs_mutex);
+            _scs_bus.WritePos(_config.id, raw_pos, 20, 0);
+        }
 
         mclog::tagWarn(_tag,
                        "id: {} stall detected, raw: {}, angle: {}, dir: {}, current: {}, load: {}, limit: [{}, {}]",
@@ -323,7 +357,10 @@ private:
             return;
         }
 
-        _scs_bus.SwitchMode(_config.id, static_cast<uint8_t>(targetMode));
+        {
+            std::lock_guard<std::mutex> lock(_scs_mutex);
+            _scs_bus.SwitchMode(_config.id, static_cast<uint8_t>(targetMode));
+        }
         _current_mode = targetMode;
     }
 };
